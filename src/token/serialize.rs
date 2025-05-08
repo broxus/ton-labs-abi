@@ -16,8 +16,9 @@ use crate::{contract::{ABI_VERSION_1_0, ABI_VERSION_2_2, AbiVersion}, error::Abi
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::BTreeMap;
 use ton_block::Serializable;
-use ton_types::{fail, BuilderData, Cell, HashmapE, IBitstring, Result};
+use ton_types::{fail, BuilderData, Cell, HashmapE, IBitstring, Result, SliceData};
 use smallvec::smallvec;
+use crate::contract::ABI_VERSION_2_4;
 
 pub struct SerializedValue {
     pub data: BuilderData,
@@ -50,6 +51,7 @@ impl TokenValue {
         for token in tokens {
             cells.append(&mut token.value.write_to_cells(abi_version)?);
         }
+
         Self::pack_cells_into_chain(cells, abi_version)
     }
 
@@ -70,19 +72,24 @@ impl TokenValue {
 
     // first cell is resulting builder
     // every next cell: put data to root
-    fn pack_cells_into_chain(mut values: Vec<SerializedValue>, abi_version: &AbiVersion) -> Result<BuilderData> {
+    fn pack_cells_into_chain(
+        mut values: Vec<SerializedValue>,
+        abi_version: &AbiVersion,
+    ) -> Result<BuilderData> {
         values.reverse();
-        let mut packed_cells = match values.pop() {
-            Some(cell) => vec![cell],
-            None => fail!(AbiError::InvalidData {
-                msg: "No cells".to_owned()
-            }),
-        };
+        let mut packed_cells: Vec<SerializedValue> = vec![SerializedValue {
+            data: BuilderData::new(),
+            max_bits: 0,
+            max_refs: 0,
+        }];
         while let Some(value) = values.pop() {
             let builder = packed_cells.last_mut().unwrap();
 
             let (remaining_bits, remaining_refs) = if abi_version >= &ABI_VERSION_2_2 {
-                (BuilderData::bits_capacity() - builder.max_bits, BuilderData::references_capacity() - builder.max_refs)
+                (
+                    BuilderData::bits_capacity() - builder.max_bits,
+                    BuilderData::references_capacity() - builder.max_refs,
+                )
             } else {
                 (builder.data.bits_free(), builder.data.references_free())
             };
@@ -92,21 +99,17 @@ impl TokenValue {
                 (value.data.bits_used(), value.data.references_used())
             };
 
-            if  remaining_bits < value_bits ||
-            remaining_refs < value_refs
-            {
+            if remaining_bits < value_bits || remaining_refs < value_refs {
                 // if not enough bits or refs - continue chain
                 packed_cells.push(value);
-            } else if   value_refs > 0 &&
-                        remaining_refs == value_refs
-            {
+            } else if value_refs > 0 && remaining_refs == value_refs {
                 // if refs strictly fit into cell we should decide if we can put them into current
                 // cell or to the next cell: if all remaining values can fit into current cell,
                 // then use current, if not - continue chain
                 let (refs, bits) = Self::get_remaining(&values, abi_version);
                 // in ABI v1 last ref is always used for chaining
-                if  abi_version != &ABI_VERSION_1_0 &&
-                    (refs == 0 && bits + value_bits <= remaining_bits)
+                if abi_version != &ABI_VERSION_1_0
+                    && (refs == 0 && bits + value_bits <= remaining_bits)
                 {
                     builder.data.append_builder(&value.data)?;
                     builder.max_bits += value.max_bits;
@@ -120,14 +123,17 @@ impl TokenValue {
                 builder.max_refs += value.max_refs;
             }
         }
-        Ok(packed_cells.into_iter().rev().reduce(
-            |acc, mut cur| {
-                cur.data.checked_append_reference(acc.data.into_cell().unwrap()).unwrap();
+        Ok(packed_cells
+            .into_iter()
+            .rev()
+            .reduce(|acc, mut cur| {
+                cur.data
+                    .checked_append_reference(acc.data.into_cell().unwrap())
+                    .unwrap();
                 cur
             })
             .unwrap()
-            .data
-        )
+            .data)
     }
 
     fn get_remaining(values: &[SerializedValue], abi_version: &AbiVersion) -> (usize, usize) {
@@ -155,32 +161,38 @@ impl TokenValue {
                 }
                 return Ok(vec);
             }
-            TokenValue::Array(param_type, ref tokens) =>
-                Self::write_array(param_type, tokens, abi_version),
-            TokenValue::FixedArray(param_type, ref tokens) =>
-                Self::write_fixed_array(param_type, tokens, abi_version),
+            TokenValue::Array(param_type, ref tokens) => {
+                Self::write_array(param_type, tokens, abi_version)
+            }
+            TokenValue::FixedArray(param_type, ref tokens) => {
+                Self::write_fixed_array(param_type, tokens, abi_version)
+            }
             TokenValue::Cell(cell) => Self::write_cell(cell),
-            TokenValue::Map(key_type, value_type, value) =>
-                Self::write_map(key_type, value_type, value, abi_version),
+            TokenValue::Map(key_type, value_type, value) => {
+                Self::write_map(key_type, value_type, value, abi_version)
+            }
             TokenValue::Address(address) => Ok(address.write_to_new_cell()?),
-            TokenValue::Bytes(ref arr) | TokenValue::FixedBytes(ref arr) =>
-                Self::write_bytes(arr, abi_version),
+            TokenValue::AddressStd(address) => Ok(address.write_to_new_cell()?),
+            TokenValue::Bytes(ref arr) => Self::write_bytes(arr, abi_version),
+            TokenValue::FixedBytes(ref arr) => Self::write_fixed_bytes(arr, abi_version),
             TokenValue::String(ref string) => Self::write_bytes(string.as_bytes(), abi_version),
             TokenValue::Token(gram) => Ok(gram.write_to_new_cell()?),
             TokenValue::Time(time) => Ok(time.write_to_new_cell()?),
             TokenValue::Expire(expire) => Ok(expire.write_to_new_cell()?),
             TokenValue::PublicKey(key) => Self::write_public_key(key),
-            TokenValue::Optional(param_type, value) =>
-                Self::write_optional(param_type, value.as_ref().map(|val| val.as_ref()), abi_version),
-            TokenValue::Ref(value) =>
-                Self::write_ref(value, abi_version),
+            TokenValue::Optional(param_type, value) => Self::write_optional(
+                param_type,
+                value.as_ref().map(|val| val.as_ref()),
+                abi_version,
+            ),
+            TokenValue::Ref(value) => Self::write_ref(value, abi_version),
         }?;
 
         let param_type = self.get_param_type();
         Ok(vec![SerializedValue {
             data,
-            max_bits: param_type.max_bit_size(),
-            max_refs: param_type.max_refs_count(),
+            max_bits: Self::max_bit_size(&param_type, abi_version),
+            max_refs: Self::max_refs_count(&param_type, abi_version),
         }])
     }
 
@@ -231,11 +243,15 @@ impl TokenValue {
         Self::write_int(&int)
     }
 
-    fn write_varnumber(vec: &[u8], size: usize) -> Result<BuilderData> {
+    fn write_varnumber(vec: &Vec<u8>, size: usize) -> Result<BuilderData> {
         let mut builder = BuilderData::new();
-        let bits = ParamType::varint_size_len(size);
-        builder.append_bits(vec.len(), bits)?;
-        builder.append_raw(vec, vec.len() * 8)?;
+        let bits = Self::varint_size_len(size);
+        if vec != &[0] {
+            builder.append_bits(vec.len(), bits as usize)?;
+            builder.append_raw(&vec, vec.len() * 8)?;
+        } else {
+            builder.append_bits(0, bits as usize)?;
+        }
 
         Ok(builder)
     }
@@ -279,7 +295,7 @@ impl TokenValue {
     fn put_array_into_dictionary(param_type: &ParamType, array: &[TokenValue], abi_version: &AbiVersion) -> Result<HashmapE> {
         let mut map = HashmapE::with_bit_len(32);
 
-        let value_in_ref = Self::map_value_in_ref(32, param_type.max_bit_size());
+        let value_in_ref = Self::map_value_in_ref(32, Self::max_bit_size(param_type, abi_version));
 
         for (i, item) in array.iter().enumerate() {
             let index = (i as u32).serialize().and_then(ton_types::SliceData::load_cell)?;
@@ -288,16 +304,20 @@ impl TokenValue {
                 Self::pack_cells_into_chain(item.write_to_cells(abi_version)?, abi_version)?;
 
             if value_in_ref {
-                map.set_builder(index, &data)?;
-            } else {
                 map.setref(index, &data.into_cell()?)?;
+            } else {
+                map.set_builder(index, &data)?;
             }
         }
 
         Ok(map)
     }
 
-    fn write_array(param_type: &ParamType, value: &[TokenValue], abi_version: &AbiVersion) -> Result<BuilderData> {
+    fn write_array(
+        param_type: &ParamType,
+        value: &Vec<TokenValue>,
+        abi_version: &AbiVersion,
+    ) -> Result<BuilderData> {
         let map = Self::put_array_into_dictionary(param_type, value, abi_version)?;
 
         let mut builder = BuilderData::new();
@@ -314,7 +334,22 @@ impl TokenValue {
         map.write_to_new_cell()
     }
 
-    fn write_bytes(data: &[u8], abi_version: &AbiVersion) -> Result<BuilderData> {
+    fn write_fixed_bytes(data: &[u8], abi_version: &AbiVersion) -> Result<BuilderData> {
+        if abi_version >= &ABI_VERSION_2_4 {
+            if data.len() * 8 > BuilderData::bits_capacity() {
+                fail!(AbiError::InvalidData {
+                    msg: "FixedBytes value size is limited to 127 bytes".to_owned()
+                })
+            }
+            let mut builder = BuilderData::new();
+            builder.append_raw(data, data.len() * 8)?;
+            Ok(builder)
+        } else {
+            Self::write_bytes(data, abi_version)
+        }
+    }
+
+    pub fn bytes_to_cells(data: &[u8], abi_version: &AbiVersion) -> Result<Cell> {
         let cell_len = BuilderData::bits_capacity() / 8;
         let mut len = data.len();
         let mut cell_capacity = if abi_version == &ABI_VERSION_1_0 {
@@ -329,33 +364,51 @@ impl TokenValue {
         while len > 0 {
             len -= cell_capacity;
             builder.append_raw(&data[len..len + cell_capacity], cell_capacity * 8)?;
-            let mut new_builder = BuilderData::new();
-            new_builder.checked_append_reference(builder.into_cell()?)?;
-            builder = new_builder;
+            if len > 0 {
+                let mut new_builder = BuilderData::new();
+                new_builder.checked_append_reference(builder.into_cell()?)?;
+                builder = new_builder;
+            }
             cell_capacity = std::cmp::min(cell_len, len);
         }
-        // if bytes are empty then we need builder with ref to empty cell
-        if builder.references_used() == 0 {
-            builder.checked_append_reference(Cell::default())?;
-        }
+        Ok(builder.into_cell()?)
+    }
+
+    fn write_bytes(data: &[u8], abi_version: &AbiVersion) -> Result<BuilderData> {
+        let cell = Self::bytes_to_cells(data, abi_version)?;
+        let mut builder = BuilderData::new();
+        builder.checked_append_reference(cell)?;
         Ok(builder)
     }
 
-    fn map_value_in_ref(key_len: usize, value_len: usize) -> bool {
-        super::MAX_HASH_MAP_INFO_ABOUT_KEY + key_len + value_len <= 1023
+    pub(crate) fn map_value_in_ref(key_len: usize, value_len: usize) -> bool {
+        super::MAX_HASH_MAP_INFO_ABOUT_KEY + key_len + value_len > 1023
     }
 
-    fn write_map(key_type: &ParamType, value_type: &ParamType, value: &BTreeMap<MapKeyTokenValue, TokenValue>, abi_version: &AbiVersion) -> Result<BuilderData> {
-        let key_len = key_type.get_map_key_size()?;
-        let value_len = value_type.max_bit_size();
+    pub fn map_token_to_hashmap_e(
+        key_type: &ParamType,
+        value_type: &ParamType,
+        value: &BTreeMap<MapKeyTokenValue, TokenValue>,
+        abi_version: &AbiVersion,
+    ) -> Result<HashmapE> {
+        let key_len = Self::get_map_key_size(key_type)?;
+        let value_len = Self::max_bit_size(value_type, abi_version);
         let value_in_ref = Self::map_value_in_ref(key_len, value_len);
 
         let mut hashmap = HashmapE::with_bit_len(key_len);
 
         for (key, value) in value.iter() {
-            let key = key.write_to_cell()?;
-            if &ParamType::Address == key_type &&
-                key.length_in_bits() != super::STD_ADDRESS_BIT_LENGTH
+            //let key = Tokenizer::tokenize_parameter(key_type, key.into(), "map key")?;
+            let key: TokenValue = key.into();
+
+            let mut key_vec = key.write_to_cells(abi_version)?;
+            if key_vec.len() != 1 {
+                fail!(AbiError::InvalidData {
+                    msg: "Map key must be 1-cell length".to_owned()
+                })
+            };
+            if &ParamType::Address == key_type
+                && key_vec[0].data.length_in_bits() != super::STD_ADDRESS_BIT_LENGTH
             {
                 fail!(AbiError::InvalidData {
                     msg: "Only std non-anycast address can be used as map key".to_owned()
@@ -365,17 +418,25 @@ impl TokenValue {
             let data =
                 Self::pack_cells_into_chain(value.write_to_cells(abi_version)?, abi_version)?;
 
-            let slice_key = ton_types::SliceData::load_builder(key)?;
+            let slice_key = SliceData::load_builder(key_vec.pop().unwrap().data)?;
             if value_in_ref {
-                hashmap.set_builder(slice_key, &data)?;
-            } else {
                 hashmap.setref(slice_key, &data.into_cell()?)?;
+            } else {
+                hashmap.set_builder(slice_key, &data)?;
             }
         }
+        return Ok(hashmap);
+    }
 
+    fn write_map(
+        key_type: &ParamType,
+        value_type: &ParamType,
+        value: &BTreeMap<MapKeyTokenValue, TokenValue>,
+        abi_version: &AbiVersion,
+    ) -> Result<BuilderData> {
+        let hashmap = Self::map_token_to_hashmap_e(key_type, value_type, value, abi_version)?;
         let mut builder = BuilderData::new();
         hashmap.write_to(&mut builder)?;
-
         Ok(builder)
     }
 
@@ -394,7 +455,7 @@ impl TokenValue {
 
     fn write_optional(param_type: &ParamType, value: Option<&TokenValue>, abi_version: &AbiVersion) -> Result<BuilderData> {
         if let Some(value) = value {
-            if param_type.is_large_optional() {
+            if Self::is_large_optional(param_type, abi_version) {
                 let value = value.pack_into_chain(abi_version)?;
                 let mut builder = BuilderData::new();
                 builder.append_bit_one()?;

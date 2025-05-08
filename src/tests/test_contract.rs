@@ -18,7 +18,7 @@ fn test_pubkey() -> Result<()> {
     let data = SliceData::load_cell(state_init.data.unwrap())?;
 
     let pub_key = Contract::get_pubkey(&data)?.unwrap();
-    assert_eq!(pub_key, vec![0; ed25519_dalek::PUBLIC_KEY_LENGTH]);
+    assert_eq!(pub_key, [0; ed25519_dalek::PUBLIC_KEY_LENGTH]);
 
     let data = Contract::insert_pubkey(data, &PUB_KEY)?;
     let pub_key = Contract::get_pubkey(&data)?.unwrap();

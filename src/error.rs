@@ -10,6 +10,7 @@
 * See the License for the specific TON DEV software governing permissions and
 * limitations under the License.
 */
+use crate::contract::AbiVersion;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AbiError {
@@ -17,6 +18,12 @@ pub enum AbiError {
     #[error( "Invalid data: {}", msg)]
     InvalidData {
         msg: String
+    },
+
+    #[error("{} is not supported in ABI v{}", .subject, .version)]
+    NotSupported {
+        subject: String,
+        version: AbiVersion,
     },
 
     #[error( "Invalid name: {}", name)]
@@ -47,19 +54,31 @@ pub enum AbiError {
     #[error( "Wrong parameter type")]
     WrongParameterType,
 
-    #[error( "Wrong data format:\n{}", val)]
+    #[error(
+        "Wrong data format in `{}` parameter:\n{}\n{} expected",
+        .name, .val, .expected
+    )]
     WrongDataFormat {
-        val: serde_json::Value
+        val: serde_json::Value,
+        name: String,
+        expected: String,
     },
 
-    #[error( "Invalid parameter length:\n{}", val)]
+    #[error(
+        "Invalid parameter `{}` length, expected {}:\n{}",
+        .name, .expected, .val
+    )]
     InvalidParameterLength {
-        val: serde_json::Value
+        name: String,
+        val: serde_json::Value,
+        expected: String,
     },
 
-    #[error( "Invalid parameter value:\n{}", val)]
+    #[error("Invalid parameter `{}` value:\n{}\n{}", .name, .val, .err)]
     InvalidParameterValue {
-        val: serde_json::Value
+        name: String,
+        val: serde_json::Value,
+        err: String,
     },
 
     #[error( "Incomplete deserialization error")]
@@ -101,4 +120,7 @@ pub enum AbiError {
 
     #[error("Message destination address is required to encode signed external inbound message body since ABI version 2.3")]
     AddressRequired,
+
+    #[error("Wrong data layout")]
+    WrongDataLayout,
 }

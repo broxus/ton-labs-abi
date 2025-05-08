@@ -15,21 +15,26 @@ use crate::{TokenValue, error::AbiError, event::Event, function::Function, param
 use serde::de::Error as SerdeError;
 use serde::Deserialize;
 use serde_json;
-use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
+use std::io;
 use ton_block::Serializable;
 use ton_types::{error, fail, BuilderData, HashmapE, Result, SliceData};
-
+use crate::param::SerdeParam;
 
 pub const MIN_SUPPORTED_VERSION: AbiVersion = ABI_VERSION_1_0;
-pub const MAX_SUPPORTED_VERSION: AbiVersion = ABI_VERSION_2_3;
+pub const MAX_SUPPORTED_VERSION: AbiVersion = ABI_VERSION_2_7;
 
 pub const ABI_VERSION_1_0: AbiVersion = AbiVersion::from_parts(1, 0);
 pub const ABI_VERSION_2_0: AbiVersion = AbiVersion::from_parts(2, 0);
 pub const ABI_VERSION_2_1: AbiVersion = AbiVersion::from_parts(2, 1);
 pub const ABI_VERSION_2_2: AbiVersion = AbiVersion::from_parts(2, 2);
 pub const ABI_VERSION_2_3: AbiVersion = AbiVersion::from_parts(2, 3);
+pub const ABI_VERSION_2_4: AbiVersion = AbiVersion::from_parts(2, 4);
+pub const ABI_VERSION_2_7: AbiVersion = AbiVersion::from_parts(2, 7);
+
+pub type PublicKeyData = [u8; ed25519_dalek::PUBLIC_KEY_LENGTH];
+pub type SignatureData = [u8; ed25519_dalek::SIGNATURE_LENGTH];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd)]
 pub struct AbiVersion {
@@ -159,10 +164,10 @@ fn bool_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
-pub struct SerdeContract {
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+struct SerdeContract {
     /// ABI version up to 2.
-    #[serde(rename="ABI version")]
+    #[serde(rename = "ABI version")]
     pub abi_version: Option<u8>,
     /// ABI version.
     pub version: Option<String>,
@@ -183,7 +188,10 @@ pub struct SerdeContract {
     pub data: Vec<DataItem>,
     /// Contract storage fields.
     #[serde(default)]
-    pub fields: Vec<Param>,
+    pub fields: Vec<SerdeParam>,
+    /// Contract getters.
+    #[serde(default)]
+    pub getters: Vec<SerdeFunction>,
 }
 
 pub struct DecodedMessage {
@@ -206,16 +214,108 @@ pub struct Contract {
     pub data: HashMap<String, DataItem>,
     /// Contract storage fields.
     pub fields: Vec<Param>,
+    /// List of `fields` parameters with `init == true`
+    pub init_fields: HashSet<String>,
+    /// Contract getters
+    pub getters: HashMap<String, Function>,
 }
 
 impl Contract {
-    pub fn load(reader: &str) -> Result<Self> {
-        serde_json::from_str::<SerdeContract>(reader)?.try_into()
-    }
+    pub fn load<T: io::Read>(reader: T) -> Result<Self> {
+        // A little trick similar to `Param` deserialization: first deserialize JSON into temporary
+        // struct `SerdeContract` containing necessary fields and then repack fields into HashMap
+        let mut serde_contract: SerdeContract = serde_json::from_reader(reader)?;
 
-    /// Loads contract from json.
-    pub fn load_from_json(reader: serde_json::Value) -> Result<Self> {
-        serde_json::from_value::<SerdeContract>(reader)?.try_into()
+        let version = if let Some(str_version) = &serde_contract.version {
+            AbiVersion::parse(str_version)?
+        } else if let Some(version) = serde_contract.abi_version {
+            AbiVersion::from_parts(version, 0)
+        } else {
+            fail!(AbiError::InvalidVersion(
+                "No version in ABI JSON".to_owned()
+            ));
+        };
+
+        if !version.is_supported() {
+            fail!(AbiError::InvalidVersion(format!(
+                "Provided ABI version is not supported ({})",
+                version
+            )));
+        }
+
+        if version.major == 1 {
+            if serde_contract.header.len() != 0 {
+                return Err(AbiError::InvalidData {
+                    msg: "Header parameters are not supported in ABI v1".into(),
+                }
+                    .into());
+            }
+            if serde_contract.set_time {
+                serde_contract.header.push(Param {
+                    name: "time".into(),
+                    kind: ParamType::Time,
+                });
+            }
+        }
+
+        if !serde_contract.fields.is_empty() && version < ABI_VERSION_2_1 {
+            fail!(AbiError::InvalidData {
+                msg: "Storage fields are supported since ABI v2.1".into()
+            });
+        }
+
+        let mut result = Self {
+            abi_version: version.clone(),
+            header: serde_contract.header,
+            functions: HashMap::new(),
+            events: HashMap::new(),
+            data: HashMap::new(),
+            fields: Vec::new(),
+            init_fields: HashSet::new(),
+            getters: HashMap::new(),
+        };
+
+        for function in serde_contract.functions {
+            Self::check_params_support(&version, function.inputs.iter())?;
+            Self::check_params_support(&version, function.outputs.iter())?;
+            result.functions.insert(
+                function.name.clone(),
+                Function::from_serde(version.clone(), function, result.header.clone()),
+            );
+        }
+
+        for getter in serde_contract.getters {
+            Self::check_params_support(&version, getter.inputs.iter())?;
+            Self::check_params_support(&version, getter.outputs.iter())?;
+            result.getters.insert(
+                getter.name.clone(),
+                Function::from_serde(version.clone(), getter, result.header.clone()),
+            );
+        }
+
+        for event in serde_contract.events {
+            Self::check_params_support(&version, event.inputs.iter())?;
+            result.events.insert(
+                event.name.clone(),
+                Event::from_serde(version.clone(), event),
+            );
+        }
+
+        Self::check_params_support(&version, serde_contract.data.iter().map(|val| &val.value))?;
+        for data in serde_contract.data {
+            result.data.insert(data.value.name.clone(), data);
+        }
+
+        for field in serde_contract.fields {
+            if field.init {
+                result.init_fields.insert(field.name.clone());
+            }
+            result
+                .fields
+                .push(Param::from_serde(field).map_err(|err| AbiError::InvalidData { msg: err })?);
+        }
+
+        Ok(result)
     }
 
     fn check_params_support<'a, T>(abi_version: &AbiVersion, params: T) -> Result<()>
@@ -232,9 +332,35 @@ impl Contract {
         Ok(())
     }
 
+
+    pub fn init_fields_supported(&self) -> bool {
+        self.abi_version >= ABI_VERSION_2_4
+    }
+
+    fn check_init_fields_support(&self) -> Result<()> {
+        if !self.init_fields_supported() {
+            return Err(AbiError::NotSupported {
+                subject: "Initial storage fields".to_owned(),
+                version: self.abi_version,
+            }
+                .into());
+        }
+        Ok(())
+    }
+
     /// Returns `Function` struct with provided function name.
     pub fn function(&self, name: &str) -> Result<&Function> {
         self.functions.get(name).ok_or_else(|| {
+            AbiError::InvalidName {
+                name: name.to_owned(),
+            }
+            .into()
+        })
+    }
+
+    /// Returns contract getter as `Function` struct with provided function name.
+    pub fn getter(&self, name: &str) -> Result<&Function> {
+        self.getters.get(name).ok_or_else(|| {
             AbiError::InvalidName {
                 name: name.to_owned(),
             }
@@ -294,14 +420,19 @@ impl Contract {
     }
 
     /// Decodes contract answer and returns name of the function called
-    pub fn decode_input(&self, data: SliceData, internal: bool) -> Result<DecodedMessage> {
+    pub fn decode_input(
+        &self,
+        data: SliceData,
+        internal: bool,
+        allow_partial: bool,
+    ) -> Result<DecodedMessage> {
         let original_data = data.clone();
 
         let func_id = Function::decode_input_id(&self.abi_version, data, &self.header, internal)?;
 
         let func = self.function_by_id(func_id, true)?;
 
-        let tokens = func.decode_input(original_data, internal)?;
+        let tokens = func.decode_input(original_data, internal, allow_partial)?;
 
         Ok(DecodedMessage {
             function_name: func.name.clone(),
@@ -311,41 +442,56 @@ impl Contract {
 
     pub const DATA_MAP_KEYLEN: usize = 64;
 
-    /// Changes initial values for public contract variables
+
+    pub fn data_map_supported(&self) -> bool {
+        self.abi_version < ABI_VERSION_2_4
+    }
+
+    fn check_data_map_support(&self) -> Result<()> {
+        if !self.data_map_supported() {
+            return Err(AbiError::NotSupported {
+                subject: "Initial data dictionary".to_owned(),
+                version: self.abi_version,
+            }
+                .into());
+        }
+        Ok(())
+    }
+
     pub fn update_data(&self, data: SliceData, tokens: &[Token]) -> Result<SliceData> {
+        self.check_data_map_support()?;
         let mut map = HashmapE::with_hashmap(Self::DATA_MAP_KEYLEN, data.reference_opt(0));
 
         for token in tokens {
             let builder = token.value.pack_into_chain(&self.abi_version)?;
-            let key = self.data
+            let key = self
+                .data
                 .get(&token.name)
                 .ok_or_else(|| AbiError::InvalidData {
                     msg: format!("data item {} not found in contract ABI", token.name),
                 })?
                 .key;
 
-                map.set_builder(
-                    key.serialize().and_then(SliceData::load_cell)?,
-                    &builder,
-                )?;
+            map.set_builder(SliceData::load_builder(key.write_to_new_cell()?)?, &builder)?;
         }
-
-        map.serialize().and_then(SliceData::load_cell)
+        SliceData::load_cell(map.serialize()?)
     }
 
     /// Decode initial values of public contract variables
-    pub fn decode_data(&self, data: SliceData) -> Result<Vec<Token>> {
-        let map = HashmapE::with_hashmap(
-            Self::DATA_MAP_KEYLEN,
-            data.reference_opt(0),
-        );
+    pub fn decode_data(&self, data: SliceData, allow_partial: bool) -> Result<Vec<Token>> {
+        self.check_data_map_support()?;
+        let map = HashmapE::with_hashmap(Self::DATA_MAP_KEYLEN, data.reference_opt(0));
 
         let mut tokens = vec![];
-        for item in self.data.values() {
-            if let Some(value) = map.get(item.key.serialize().and_then(SliceData::load_cell)?)? {
-                tokens.append(
-                    &mut TokenValue::decode_params(&[item.value.clone()], value, &self.abi_version, false)?
-                );
+        for (_, item) in &self.data {
+            let key = SliceData::load_builder(item.key.write_to_new_cell()?)?;
+            if let Some(value) = map.get(key)? {
+                tokens.append(&mut TokenValue::decode_params(
+                    &vec![item.value.clone()],
+                    value,
+                    &self.abi_version,
+                    allow_partial,
+                )?);
             }
         }
 
@@ -353,30 +499,23 @@ impl Contract {
     }
 
     // Gets public key from contract data
-    pub fn get_pubkey(data: &SliceData) -> Result<Option<Vec<u8>>> {
-        let map = HashmapE::with_hashmap(
-            Self::DATA_MAP_KEYLEN,
-            data.reference_opt(0),
-        );
-        map.get(0u64.serialize().and_then(SliceData::load_cell)?)
-            .map(|opt| opt.map(|slice| slice.get_bytestring(0)))
+    pub fn get_pubkey(data: &SliceData) -> Result<Option<PublicKeyData>> {
+        let map = HashmapE::with_hashmap(Self::DATA_MAP_KEYLEN, data.reference_opt(0));
+        Ok(map
+            .get(SliceData::load_builder(0u64.write_to_new_cell()?)?)?
+            .map(|slice| slice.get_bytestring(0).as_slice().try_into())
+            .transpose()?)
     }
 
     /// Sets public key into contract data
-    pub fn insert_pubkey(data: SliceData, pubkey: &[u8]) -> Result<SliceData> {
-        let pubkey_vec = SmallVec::from_slice(pubkey);
+    pub fn insert_pubkey(data: SliceData, pubkey: &PublicKeyData) -> Result<SliceData> {
+        let pubkey_vec = pubkey.to_vec();
         let pubkey_len = pubkey_vec.len() * 8;
-        let value = BuilderData::with_raw(pubkey_vec, pubkey_len)?;
+        let value = BuilderData::with_raw(pubkey_vec.into(), pubkey_len)?;
 
-        let mut map = HashmapE::with_hashmap(
-            Self::DATA_MAP_KEYLEN,
-            data.reference_opt(0)
-        );
-        map.set_builder(
-            0u64.serialize().and_then(SliceData::load_cell)?,
-            &value,
-        )?;
-        map.serialize().and_then(SliceData::load_cell)
+        let mut map = HashmapE::with_hashmap(Self::DATA_MAP_KEYLEN, data.reference_opt(0));
+        map.set_builder(SliceData::load_builder(0u64.write_to_new_cell()?)?, &value)?;
+        SliceData::load_cell(map.serialize()?)
     }
 
     /// Add sign to messsage body returned by `prepare_input_for_sign` function
@@ -389,75 +528,52 @@ impl Contract {
         Function::add_sign_to_encoded_input(&self.abi_version, signature, public_key, function_call)
     }
 
-    /// Decode account storage fields
-    pub fn decode_storage_fields(&self, data: SliceData) -> Result<Vec<Token>> {
-        TokenValue::decode_params(&self.fields, data, &self.abi_version, false)
-    }
-}
+    /// Encode account storage fields
+    pub fn encode_storage_fields(
+        &self,
+        mut init_fields: HashMap<String, TokenValue>,
+    ) -> Result<BuilderData> {
+        self.check_init_fields_support()?;
 
-impl TryFrom<SerdeContract> for Contract {
-    type Error = anyhow::Error;
+        let mut tokens = vec![];
+        for param in &self.fields {
+            let token = init_fields
+                .remove_entry(&param.name)
+                .map(|(name, value)| Token { name, value });
 
-    fn try_from(mut serde_contract: SerdeContract) -> Result<Self> {
-        let version = if let Some(str_version) = &serde_contract.version {
-            AbiVersion::parse(str_version)?
-        } else if let Some(version) = serde_contract.abi_version {
-            AbiVersion::from_parts(version, 0)
-        } else {
-            fail!(AbiError::InvalidVersion("No version in ABI JSON".to_owned()));
-        };
-
-        if !version.is_supported() {
-            fail!(AbiError::InvalidVersion(format!("Provided ABI version is not supported ({})", version)));
-        }
-
-        if version.major == 1 {
-            if !serde_contract.header.is_empty() {
-                return Err(AbiError::InvalidData {
-                    msg: "Header parameters are not supported in ABI v1".into(),
+            if self.init_fields.contains(&param.name) {
+                let token = token.ok_or_else(|| AbiError::InvalidInputData {
+                    msg: format!(
+                        "Storage field '{}' is marked as `init` and should be supplied",
+                        param.name
+                    ),
+                })?;
+                tokens.push(token);
+            } else {
+                if token.is_some() {
+                    return Err(error!(AbiError::InvalidInputData {
+                        msg: format!(
+                            "Storage field '{}' is not marked as `init` and should not be supplied",
+                            param.name
+                        )
+                    }));
                 }
-                    .into());
-            }
-            if serde_contract.set_time {
-                serde_contract.header.push(Param {
-                    name: "time".into(),
-                    kind: ParamType::Time,
+                tokens.push(Token {
+                    name: param.name.clone(),
+                    value: TokenValue::default_value(&param.kind),
                 });
             }
         }
+        TokenValue::pack_values_into_chain(&tokens, vec![], &self.abi_version)
+    }
 
-        if !serde_contract.fields.is_empty() && version < ABI_VERSION_2_1 {
-            fail!(AbiError::InvalidData {msg: "Storage fields are supported since ABI v2.1".into()});
-        }
-
-        let mut result = Self {
-            abi_version: version,
-            header: serde_contract.header,
-            functions: HashMap::new(),
-            events: HashMap::new(),
-            data: HashMap::new(),
-            fields: serde_contract.fields,
-        };
-
-        for function in serde_contract.functions {
-            Self::check_params_support(&version, function.inputs.iter())?;
-            Self::check_params_support(&version, function.outputs.iter())?;
-            result.functions.insert(
-                function.name.clone(),
-                Function::from_serde(version, function, result.header.clone()));
-        }
-
-        for event in serde_contract.events {
-            Self::check_params_support(&version, event.inputs.iter())?;
-            result.events.insert(event.name.clone(), Event::from_serde(version, event));
-        }
-
-        Self::check_params_support(&version, serde_contract.data.iter().map(|val| &val.value))?;
-        for data in serde_contract.data {
-            result.data.insert(data.value.name.clone(), data);
-        }
-
-        Ok(result)
+    /// Decode account storage fields
+    pub fn decode_storage_fields(
+        &self,
+        data: SliceData,
+        allow_partial: bool,
+    ) -> Result<Vec<Token>> {
+        TokenValue::decode_params(&self.fields, data, &self.abi_version, allow_partial)
     }
 }
 
