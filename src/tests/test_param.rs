@@ -25,24 +25,22 @@ use crate::contract::ABI_VERSION_2_0;
 
 #[test]
 fn int_json_representation() {
-    let value = Detokenizer::detokenize_to_json_value(
-        &[
-            Token::new("u8", TokenValue::Uint(Uint::new(1, 8))),
-            Token::new("i32", TokenValue::Int(Int::new(-1, 32))),
-            Token::new("u256", TokenValue::Uint(Uint::new(1, 256))),
-            Token::new("u128", TokenValue::Uint(Uint::new(1, 128))),
-            Token::new("i256", TokenValue::Int(Int::new(-1, 256))),
-            Token::new("vi16", TokenValue::VarInt(16, (-1i32).into())),
-            Token::new("vu32", TokenValue::VarUint(32, 1u32.into())),
-        ],
-    )
-    .unwrap();
+    let value = Detokenizer::detokenize_to_json_value(&[
+        Token::new("u8", TokenValue::Uint(Uint::new(1, 8))),
+        Token::new("i32", TokenValue::Int(Int::new(-1, 32))),
+        Token::new("u256", TokenValue::Uint(Uint::new(1, 256))),
+        Token::new("u128", TokenValue::Uint(Uint::new(1, 128))),
+        Token::new("i256", TokenValue::Int(Int::new(-1, 256))),
+        Token::new("vi16", TokenValue::VarInt(16, (-1i32).into())),
+        Token::new("vu32", TokenValue::VarUint(32, 1u32.into())),
+    ])
+        .unwrap();
     assert_eq!(
         value,
         serde_json::json!({
             "u8": "1",
             "i32": "-1",
-            "u256": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "u256": "1",
             "u128": "1",
             "i256": "-1",
             "vi16": "-1",

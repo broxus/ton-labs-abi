@@ -12,10 +12,10 @@
 */
 
 mod tokenize_tests {
-    use crate::{Int, Param, ParamType, Token, TokenValue, Uint};
+    use crate::{Int, MapKeyTokenValue, Param, ParamType, Token, TokenValue, Uint};
     // use serde::Serialize;
-    use std::collections::{BTreeMap, HashMap};
-    use crate::token::{Detokenizer, MapKeyTokenValue, Tokenizer};
+    use std::collections::BTreeMap;
+    use crate::token::{Detokenizer, Tokenizer};
     use ton_block::{MsgAddress};
     use ton_types::{AccountId, BuilderData, SliceData};
     use smallvec::smallvec;
@@ -526,12 +526,28 @@ mod tokenize_tests {
         }"#;
 
         let params = vec![
-            Param::new("a", ParamType::Map(Box::new(ParamType::Int(8)), Box::new(ParamType::Uint(32)))),
-            Param::new("b", ParamType::Map(Box::new(ParamType::Uint(32)), Box::new(ParamType::Uint(32)))),
-            Param::new("c", ParamType::Map(Box::new(ParamType::Int(8)), Box::new(ParamType::Tuple(vec![
-                Param::new("q1", ParamType::Uint(32)), Param::new("q2", ParamType::Int(8))
-            ])))),
-            Param::new("d", ParamType::Map(Box::new(ParamType::Address), Box::new(ParamType::Uint(32)))),
+            Param::new(
+                "a",
+                ParamType::Map(Box::new(ParamType::Int(8)), Box::new(ParamType::Uint(32))),
+            ),
+            Param::new(
+                "b",
+                ParamType::Map(Box::new(ParamType::Uint(32)), Box::new(ParamType::Uint(32))),
+            ),
+            Param::new(
+                "c",
+                ParamType::Map(
+                    Box::new(ParamType::Int(8)),
+                    Box::new(ParamType::Tuple(vec![
+                        Param::new("q1", ParamType::Uint(32)),
+                        Param::new("q2", ParamType::Int(8)),
+                    ])),
+                ),
+            ),
+            Param::new(
+                "d",
+                ParamType::Map(Box::new(ParamType::Address), Box::new(ParamType::Uint(32))),
+            ),
         ];
 
         let mut expected_tokens = vec![];
@@ -539,43 +555,67 @@ mod tokenize_tests {
         map.insert(MapKeyTokenValue::Int(Int::new(-12, 8)), TokenValue::Uint(Uint::new(42, 32)));
         map.insert(MapKeyTokenValue::Int(Int::new(127, 8)), TokenValue::Uint(Uint::new(37, 32)));
         map.insert(MapKeyTokenValue::Int(Int::new(-128, 8)), TokenValue::Uint(Uint::new(56, 32)));
-        expected_tokens.push(Token::new("a", TokenValue::Map(ParamType::Int(8), ParamType::Uint(32), map)));
+        expected_tokens.push(Token::new(
+            "a",
+            TokenValue::Map(ParamType::Int(8), ParamType::Uint(32), map),
+        ));
 
         let mut map = BTreeMap::<MapKeyTokenValue, TokenValue>::new();
-        map.insert(MapKeyTokenValue::Uint(Uint::new(0xFFFFFFFF, 32)), TokenValue::Uint(Uint::new(777, 32)));
-        map.insert(MapKeyTokenValue::Uint(Uint::new(0x0000FFFF, 32)), TokenValue::Uint(Uint::new(  0, 32)));
-        expected_tokens.push(Token::new("b", TokenValue::Map(ParamType::Uint(32), ParamType::Uint(32), map)));
-
+        map.insert(
+            MapKeyTokenValue::Uint(Uint::new(0xFFFFFFFFu128, 32)),
+            TokenValue::Uint(Uint::new(777, 32)),
+        );
+        map.insert(
+            MapKeyTokenValue::Uint(Uint::new(0x0000FFFFu128, 32)),
+            TokenValue::Uint(Uint::new(0, 32)),
+        );
+        expected_tokens.push(Token::new(
+            "b",
+            TokenValue::Map(ParamType::Uint(32), ParamType::Uint(32), map),
+        ));
 
         let mut map = BTreeMap::<MapKeyTokenValue, TokenValue>::new();
-        map.insert(MapKeyTokenValue::Int(Int::new(1, 8)), TokenValue::Tuple(vec![
-            Token::new("q1", TokenValue::Uint(Uint::new(314, 32))),
-            Token::new("q2", TokenValue::Int(Int::new(15, 8))),
-        ]));
-        map.insert(MapKeyTokenValue::Int(Int::new(2, 8)), TokenValue::Tuple(vec![
-            Token::new("q1", TokenValue::Uint(Uint::new(92, 32))),
-            Token::new("q2", TokenValue::Int(Int::new(6, 8))),
-        ]));
-        expected_tokens.push(Token::new("c", TokenValue::Map(
-            ParamType::Int(8),
-            ParamType::Tuple(vec![
-                Param {
-                    name: "q1".to_owned(),
-                    kind: ParamType::Uint(32),
-                },
-                Param {
-                    name: "q2".to_owned(),
-                    kind: ParamType::Int(8),
-                },
+        map.insert(
+            MapKeyTokenValue::Int(Int::new(1i128, 8)),
+            TokenValue::Tuple(vec![
+                Token::new("q1", TokenValue::Uint(Uint::new(314, 32))),
+                Token::new("q2", TokenValue::Int(Int::new(15, 8))),
             ]),
-            map
-        )));
+        );
+        map.insert(
+            MapKeyTokenValue::Int(Int::new(2i128, 8)),
+            TokenValue::Tuple(vec![
+                Token::new("q1", TokenValue::Uint(Uint::new(92, 32))),
+                Token::new("q2", TokenValue::Int(Int::new(6, 8))),
+            ]),
+        );
+        expected_tokens.push(Token::new(
+            "c",
+            TokenValue::Map(
+                ParamType::Int(8),
+                ParamType::Tuple(vec![
+                    Param {
+                        name: "q1".to_owned(),
+                        kind: ParamType::Uint(32),
+                    },
+                    Param {
+                        name: "q2".to_owned(),
+                        kind: ParamType::Int(8),
+                    },
+                ]),
+                map,
+            ),
+        ));
 
         let mut map = BTreeMap::<MapKeyTokenValue, TokenValue>::new();
         map.insert(
             MapKeyTokenValue::Address(MsgAddress::with_standart(None, 0, AccountId::from([0x11; 32])).unwrap()),
-            TokenValue::Uint(Uint::new(123, 32)));
-        expected_tokens.push(Token::new("d", TokenValue::Map(ParamType::Address, ParamType::Uint(32), map)));
+            TokenValue::Uint(Uint::new(123, 32)),
+        );
+        expected_tokens.push(Token::new(
+            "d",
+            TokenValue::Map(ParamType::Address, ParamType::Uint(32), map),
+        ));
 
         assert_eq!(
             Tokenizer::tokenize_all_params(&params, &serde_json::from_str(input).unwrap()).unwrap(),
@@ -586,7 +626,8 @@ mod tokenize_tests {
         let input = Detokenizer::detokenize(&expected_tokens).unwrap();
         println!("{}", input);
         assert_eq!(
-            Tokenizer::tokenize_all_params(&params, &serde_json::from_str(&input).unwrap()).unwrap(),
+            Tokenizer::tokenize_all_params(&params, &serde_json::from_str(&input).unwrap())
+                .unwrap(),
             expected_tokens
         );
     }
@@ -634,7 +675,7 @@ mod tokenize_tests {
     fn test_tokenize_bytes() {
         let input = r#"{
             "a": "ABCDEF",
-            "b": "ABCDEF0102",
+            "b": "ABCDEF",
             "c": "55555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555"
         }"#;
 
@@ -961,8 +1002,7 @@ mod tokenize_tests {
         assert!(
             Tokenizer::tokenize_optional_params(
                 &params,
-                &serde_json::from_str(input).unwrap(),
-                &HashMap::new()
+                &serde_json::from_str(input).unwrap()
             ).is_err(),
         );
     }
@@ -987,7 +1027,7 @@ mod types_check_tests {
         let big_int = Int::new(123, 64);
         let big_uint = Uint::new(456, 32);
         let mut map = BTreeMap::<MapKeyTokenValue, TokenValue>::new();
-        map.insert(MapKeyTokenValue::Int(Int::new(1, 8)), TokenValue::Uint(Uint::new(17, 32)));
+        map.insert(MapKeyTokenValue::Uint(Uint::new(1u128, 8)), TokenValue::Uint(Uint::new(17, 32)));
 
         let tokens = vec![
             Token {
@@ -1004,7 +1044,7 @@ mod types_check_tests {
             },
             Token {
                 name: "d".to_owned(),
-                value: TokenValue::VarInt(16, 1000.into()),
+                value: TokenValue::VarInt(16, 1000u32.into()),
             },
             Token {
                 name: "e".to_owned(),
@@ -1014,7 +1054,7 @@ mod types_check_tests {
                 name: "f".to_owned(),
                 value: TokenValue::Array(
                     ParamType::Bool,
-                    vec![TokenValue::Bool(false), TokenValue::Bool(true)]
+                    vec![TokenValue::Bool(false), TokenValue::Bool(true)],
                 ),
             },
             Token {
@@ -1024,7 +1064,8 @@ mod types_check_tests {
                     vec![
                         TokenValue::Int(big_int.clone()),
                         TokenValue::Int(big_int.clone()),
-                ]),
+                    ],
+                ),
             },
             Token {
                 name: "j".to_owned(),
@@ -1045,43 +1086,47 @@ mod types_check_tests {
             },
             Token {
                 name: "l".to_owned(),
-                value: TokenValue::Address(MsgAddress::AddrNone)
+                value: TokenValue::Address(MsgAddress::AddrNone),
             },
             Token {
                 name: "m1".to_owned(),
-                value: TokenValue::Map(ParamType::Int(8), ParamType::Bool, Default::default())
+                value: TokenValue::Map(
+                    ParamType::Int(8),
+                    ParamType::Bool,
+                    BTreeMap::<MapKeyTokenValue, TokenValue>::new(),
+                ),
             },
             Token {
                 name: "m2".to_owned(),
-                value: TokenValue::Map(ParamType::Int(8), ParamType::Uint(32), map)
+                value: TokenValue::Map(ParamType::Int(8), ParamType::Uint(32), map),
             },
             Token {
                 name: "n".to_owned(),
-                value: TokenValue::Bytes(vec![1])
+                value: TokenValue::Bytes(vec![1]),
             },
             Token {
                 name: "o".to_owned(),
-                value: TokenValue::FixedBytes(vec![1, 2, 3])
+                value: TokenValue::FixedBytes(vec![1, 2, 3]),
             },
             Token {
                 name: "p".to_owned(),
-                value: TokenValue::Token(17u64.into())
+                value: TokenValue::Token(17u64.into()),
             },
             Token {
                 name: "q".to_owned(),
-                value: TokenValue::Time(123)
+                value: TokenValue::Time(123),
             },
             Token {
                 name: "r".to_owned(),
-                value: TokenValue::Expire(456)
+                value: TokenValue::Expire(456),
             },
             Token {
                 name: "s".to_owned(),
-                value: TokenValue::PublicKey(None)
+                value: TokenValue::PublicKey(None),
             },
             Token {
                 name: "t".to_owned(),
-                value: TokenValue::String("123".to_owned())
+                value: TokenValue::String("123".to_owned()),
             },
             Token {
                 name: "u".to_owned(),
@@ -1089,7 +1134,10 @@ mod types_check_tests {
             },
             Token {
                 name: "v".to_owned(),
-                value: TokenValue::Optional(ParamType::Bool, Some(Box::new(TokenValue::Bool(true)))),
+                value: TokenValue::Optional(
+                    ParamType::Bool,
+                    Some(Box::new(TokenValue::Bool(true))),
+                ),
             },
             Token {
                 name: "w".to_owned(),
@@ -1224,8 +1272,8 @@ mod types_check_tests {
             name: "g".to_owned(),
             value: TokenValue::FixedArray(
                 ParamType::Int(64),
-                vec![TokenValue::Int(big_int.clone())
-            ]),
+                vec![TokenValue::Int(big_int.clone())],
+            ),
         };
         assert_not_type_check(&tokens_wrong_fixed_array_size, &params);
 
@@ -1234,10 +1282,8 @@ mod types_check_tests {
             name: "f".to_owned(),
             value: TokenValue::Array(
                 ParamType::Bool,
-                vec![
-                    TokenValue::Bool(false),
-                    TokenValue::Int(big_int.clone()),
-            ]),
+                vec![TokenValue::Bool(false), TokenValue::Int(big_int.clone())],
+            ),
         };
         assert_not_type_check(&tokens_wrong_array_type, &params);
 

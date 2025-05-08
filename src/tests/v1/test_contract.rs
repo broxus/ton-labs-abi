@@ -65,7 +65,7 @@ const TEST_ABI: &str = r#"
 
 #[test]
 fn test_abi_parse() {
-    let parsed_contract = Contract::load(TEST_ABI).unwrap();
+    let parsed_contract = Contract::load(TEST_ABI.as_bytes()).unwrap();
 
     let mut functions = HashMap::new();
     let header = vec![Param { name: "time".into(), kind: ParamType::Time}];
@@ -185,14 +185,23 @@ fn test_abi_parse() {
             key: 100
         });
 
-    let expected_contract = Contract { abi_version: 1.into(), header, functions, events, data, fields: vec![] };
+    let expected_contract = Contract {
+        abi_version: 1.into(),
+        header,
+        functions,
+        events,
+        data,
+        fields: vec![],
+        init_fields: Default::default(),
+        getters: Default::default(),
+    };
 
     assert_eq!(parsed_contract, expected_contract);
 }
 
 #[test]
 fn print_function_singnatures() {
-    let contract = Contract::load(TEST_ABI).unwrap();
+    let contract = Contract::load(TEST_ABI.as_bytes()).unwrap();
 
     println!("Functions\n");
 
@@ -228,7 +237,7 @@ const TEST_ABI_WRONG_VERSION: &str = r#"
 
 #[test]
 fn test_abi_wrong_version() {
-    assert!(Contract::load(TEST_ABI_WRONG_VERSION).is_err());
+    assert!(Contract::load(TEST_ABI_WRONG_VERSION.as_bytes()).is_err());
 }
 
 const TEST_ABI_HEADER_IN_V1: &str = r#"
@@ -240,5 +249,5 @@ const TEST_ABI_HEADER_IN_V1: &str = r#"
 
 #[test]
 fn test_abi_header_in_v1() {
-    assert!(Contract::load(TEST_ABI_HEADER_IN_V1).is_err());
+    assert!(Contract::load(TEST_ABI_HEADER_IN_V1.as_bytes()).is_err());
 }

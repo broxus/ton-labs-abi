@@ -11,7 +11,7 @@
 * limitations under the License.
 */
 
-use ed25519::signature::{Signature, Signer};
+use ed25519_dalek::{Signature, Signer};
 
 use ton_types::{BuilderData, SliceData};
 use ton_types::dictionary::HashmapE;
@@ -158,6 +158,7 @@ fn test_constructor_call() {
     let response = decode_unknown_function_call(
         WALLET_ABI,
         test_tree,
+        false,
         false
     ).unwrap();
 
@@ -198,7 +199,7 @@ fn test_signed_call() {
     }"#;
     let header = "{}";
 
-    let expected_params = r#"{"value":"0x000000000000000000000000000000000000000000000000000000000000000c","period":"30"}"#;
+    let expected_params = r#"{"value":"12","period":"30"}"#;
 
     let pair = Keypair::generate(&mut rand::thread_rng());
 
@@ -218,6 +219,7 @@ fn test_signed_call() {
     let response = decode_unknown_function_call(
         WALLET_ABI,
         test_tree.clone(),
+        false,
         false
     )
     .unwrap();
@@ -319,7 +321,12 @@ fn test_add_signature_full() {
         Some(&pair.public.to_bytes()),
         SliceData::load_builder(msg).unwrap()).unwrap();
 
-    let decoded = decode_unknown_function_call(WALLET_ABI, SliceData::load_builder(msg).unwrap(), false).unwrap();
+    let decoded = decode_unknown_function_call(
+        WALLET_ABI,
+        SliceData::load_builder(msg).unwrap(),
+        false,
+        false
+    ).unwrap();
 
     assert_eq!(decoded.params, params);
 }
@@ -340,7 +347,7 @@ fn test_find_event() {
 #[test]
 fn test_store_pubkey() {
     let mut test_map = HashmapE::with_bit_len(Contract::DATA_MAP_KEYLEN);
-    let test_pubkey = vec![11u8; 32];
+    let test_pubkey = [11u8; 32];
     test_map.set_builder(
         0u64.serialize().and_then(SliceData::load_cell).unwrap(),
         &BuilderData::with_raw(smallvec![0u8; 32], 256).unwrap(),
@@ -363,51 +370,51 @@ fn test_store_pubkey() {
 #[test]
 fn test_update_decode_contract_data() {
     let mut test_map = HashmapE::with_bit_len(Contract::DATA_MAP_KEYLEN);
-    test_map.set_builder(
-        0u64.serialize().and_then(SliceData::load_cell).unwrap(),
-        &BuilderData::with_raw(smallvec![0u8; 32], 256).unwrap(),
-    ).unwrap();
+    test_map
+        .set_builder(
+            SliceData::load_builder(0u64.write_to_new_cell().unwrap()).unwrap(),
+            &BuilderData::with_raw(smallvec![0u8; 32], 256).unwrap(),
+        )
+        .unwrap();
 
     let params = r#"{
         "subscription": "0:1111111111111111111111111111111111111111111111111111111111111111",
-        "owner": "0x2222222222222222222222222222222222222222222222222222222222222222"
+        "owner": "15438945231642159389809464667825054380435997955418741871927677867721750618658"
      }
     "#;
 
-    let data = test_map.serialize().and_then(SliceData::load_cell).unwrap();
+    let data = SliceData::load_builder(test_map.write_to_new_cell().unwrap()).unwrap();
     let new_data = update_contract_data(WALLET_ABI, params, data).unwrap();
     let new_map = HashmapE::with_hashmap(Contract::DATA_MAP_KEYLEN, new_data.reference_opt(0));
 
-
-    let key_slice = new_map.get(
-        0u64.serialize().and_then(SliceData::load_cell).unwrap(),
-    )
-    .unwrap()
-    .unwrap();
+    let key_slice = new_map
+        .get(SliceData::load_builder(0u64.write_to_new_cell().unwrap()).unwrap())
+        .unwrap()
+        .unwrap();
 
     assert_eq!(key_slice.get_bytestring(0), vec![0u8; 32]);
 
-
-    let subscription_slice = new_map.get(
-        101u64.serialize().and_then(SliceData::load_cell).unwrap(),
-    )
-    .unwrap()
-    .unwrap();
+    let subscription_slice = new_map
+        .get(SliceData::load_builder(101u64.write_to_new_cell().unwrap()).unwrap())
+        .unwrap()
+        .unwrap();
 
     assert_eq!(
-        subscription_slice,
-        MsgAddressInt::with_standart(None, 0, [0x11; 32].into()).unwrap().serialize().and_then(SliceData::load_cell).unwrap());
+        subscription_slice.into_cell(),
+        MsgAddressInt::with_standart(None, 0, [0x11; 32].into())
+            .unwrap()
+            .serialize()
+            .unwrap()
+    );
 
-
-    let owner_slice = new_map.get(
-        100u64.serialize().and_then(SliceData::load_cell).unwrap(),
-    )
-    .unwrap()
-    .unwrap();
+    let owner_slice = new_map
+        .get(SliceData::load_builder(100u64.write_to_new_cell().unwrap()).unwrap())
+        .unwrap()
+        .unwrap();
 
     assert_eq!(owner_slice.get_bytestring(0), vec![0x22; 32]);
 
-    let decoded = decode_contract_data(WALLET_ABI, new_data).unwrap();
+    let decoded = decode_contract_data(WALLET_ABI, new_data, false).unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(params).unwrap(),
         serde_json::from_str::<Value>(&decoded).unwrap()

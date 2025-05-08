@@ -16,6 +16,7 @@ use crate::param_type::{ParamType, read_type};
 use serde::de::{Deserializer, Error};
 use serde::Deserialize;
 
+
 /// Function param.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Param {
@@ -32,18 +33,35 @@ impl Param {
             kind
         }
     }
+
+    pub(crate) fn from_serde(serde_param: SerdeParam) -> Result<Self, String> {
+        let mut result = Self {
+            name: serde_param.name,
+            kind: serde_param.kind,
+        };
+
+        result
+            .kind
+            .set_components(serde_param.components)
+            .map_err(|err| err.to_string())?;
+
+        Ok(result)
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-struct SerdeParam {
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub(crate) struct SerdeParam {
     /// Param name.
     pub name: String,
     /// Param type.
-    #[serde(rename="type")]
+    #[serde(rename = "type")]
     pub kind: ParamType,
     /// Tuple components
     #[serde(default)]
-    pub components: Vec<Param>
+    pub components: Vec<Param>,
+    /// `init` flag for fields section
+    #[serde(default)]
+    pub init: bool,
 }
 
 impl<'a> Deserialize<'a> for Param {

@@ -82,21 +82,21 @@ impl Token {
 
     pub fn detokenize_big_uint<S>(
         number: &BigUint,
-        size: usize,
+        _size: usize,
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let uint_str = if size == 256 {
-            format!("0x{:0>64}", number.to_str_radix(16))
-        } else {
-            number.to_str_radix(10)
-        };
+        let uint_str = number.to_str_radix(10);
         serializer.serialize_str(&uint_str)
     }
 
-    pub fn detokenize_hashmap<S>(_key_type: &ParamType, values: &BTreeMap<MapKeyTokenValue, TokenValue>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    pub fn detokenize_hashmap<S>(
+        _key_type: &ParamType,
+        values: &BTreeMap<MapKeyTokenValue, TokenValue>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -187,6 +187,7 @@ impl Serialize for TokenValue {
             TokenValue::Map(key_type, _, ref map) =>
                 Token::detokenize_hashmap(key_type, map, serializer),
             TokenValue::Address(ref address) => serializer.serialize_str(&address.to_string()),
+            TokenValue::AddressStd(ref address) => serializer.serialize_str(&address.to_string()),
             TokenValue::Bytes(ref arr) => Token::detokenize_bytes(arr, serializer),
             TokenValue::FixedBytes(ref arr) => Token::detokenize_bytes(arr, serializer),
             TokenValue::String(string) => serializer.serialize_str(string),
