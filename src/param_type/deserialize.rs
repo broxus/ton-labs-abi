@@ -119,6 +119,9 @@ pub fn read_type(name: &str) -> Result<ParamType> {
         "address" => {
             ParamType::Address
         }
+        "address_std" => {
+            ParamType::AddressStd
+        }
         "token" => {
             ParamType::Token
         }

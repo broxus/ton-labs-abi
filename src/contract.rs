@@ -222,10 +222,7 @@ pub struct Contract {
 
 impl Contract {
     pub fn load<T: io::Read>(reader: T) -> Result<Self> {
-        // A little trick similar to `Param` deserialization: first deserialize JSON into temporary
-        // struct `SerdeContract` containing necessary fields and then repack fields into HashMap
         let mut serde_contract: SerdeContract = serde_json::from_reader(reader)?;
-
         let version = if let Some(str_version) = &serde_contract.version {
             AbiVersion::parse(str_version)?
         } else if let Some(version) = serde_contract.abi_version {
