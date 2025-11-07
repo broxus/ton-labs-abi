@@ -13,7 +13,8 @@
 
 use crate::{Contract, Function, Event, Param, ParamType, DataItem};
 use std::collections::HashMap;
-
+use ton_block::{Deserializable, StateInit};
+use ton_types::SliceData;
 use crate::contract::ABI_VERSION_2_4;
 
 const TEST_ABI: &str = r#"
@@ -295,5 +296,51 @@ fn print_function_singnatures() {
         let id = event.get_function_id();
         println!("{:X?}\n", id);
     }
+}
+
+#[test]
+fn decode_27_init_data() {
+    let abi: &str = r#"
+            {
+            "ABI version": 2,
+            "version": "2.7",
+            "header": ["time"],
+            "functions": [
+                {
+                    "name": "constructor",
+                    "id": "0x15A038FB",
+                    "inputs": [
+                        {"name":"walletCode","type":"cell"},
+                        {"name":"walletVersion","type":"uint32"},
+                        {"name":"sender","type":"address"},
+                        {"name":"remainingGasTo","type":"address"}
+                    ],
+                    "outputs": [
+                    ]
+                }
+            ],
+            "getters": [
+            ],
+            "events": [
+            ],
+            "fields": [
+                {"init":true,"name":"_pubkey","type":"fixedbytes32"},
+                {"init":false,"name":"_timestamp","type":"uint64"},
+                {"init":false,"name":"_constructorFlag","type":"bool"},
+                {"init":true,"name":"root","type":"address"},
+                {"init":true,"name":"owner","type":"address"}
+            ]
+        }
+    "#;
+    let state_init = "te6ccgECEQEAAh8AAgE0AwEBkwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAClpUZkiqXET1LlWmUdabCyx23t4PU866Vze+okEWE5ZIAgBDgBKujOHFR/zpQkRw7J6dw7JSEbq3q0AB7+WeyeICA5ZP8AES/wD0pBP0vPILBAIBIAYFAoTyf4n4aSHbPNMAAY4UgwjXGCD4KMjOzsn5AFj4QvkQ8qje0z8B+EMhufK0IPgjgQPoqIIIG3dAoLnytPhj0x8x8jwODwICxQgHAROyAgw2zz4D/IAgCwNj2OHaiaECAoGuQ64UAfDMRaGmB/SAYfDTUnABuEOOAcYEQ64aP+V4Q8YGA+lIQelD5HkQEAkEaqAVoDj7+EJu4wD4RvJz1NMf+kDU0dD6QNH4SfhKxwUgjxIwIYnHBbMgjogwIds8+EnHBd7fDw4NCgI8joVUcyDbPI4QIMjPhQjOgG/PQMmBAKD7AOJfBNs8DAsALPhK+EP4QsjL/8s/z4PO+EvIzs3J7VQARPhKyM74S88WgQCgz0ASyx/O+CoBzCH7BAHQ7R7tU8nxGAgATPhKyIEBQc9AzgHIzs3J+CrIz4SA9AD0AM+ByfkAyM+KAEDL/8nQAEOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQADbtRNDT/9M/0wD6QNTR0PpA0fhr+Gr4Zvhj+GIACvhG8uBM";
+
+    let state_init = StateInit::construct_from_bytes(&base64::decode(state_init).unwrap_or_default()).unwrap();
+
+    let data = state_init.data.unwrap();
+
+    let contract = Contract::load(abi.as_bytes()).unwrap();
+
+    let x = contract.decode_init_data(SliceData::load_cell(data).unwrap()).unwrap();
+    assert_eq!(x.len(), 3);
 }
 

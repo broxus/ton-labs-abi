@@ -483,7 +483,7 @@ fn test_update_decode_contract_data() {
 
     assert_eq!(owner_slice.get_bytestring(0), vec![0x22; 32]);
 
-    let decoded = decode_contract_data(WALLET_ABI, new_data, false).unwrap();
+    let decoded = decode_contract_data(WALLET_ABI, new_data).unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(params).unwrap(),
         serde_json::from_str::<Value>(&decoded).unwrap()

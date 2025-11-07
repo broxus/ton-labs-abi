@@ -306,7 +306,7 @@ impl Function {
     pub fn decode_header(
         abi_version: &AbiVersion,
         cursor: SliceData,
-        header: &Vec<Param>,
+        header: &[Param],
         internal: bool,
     ) -> Result<(Vec<Token>, u32, Cursor)> {
         let mut tokens = vec![];

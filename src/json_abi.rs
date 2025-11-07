@@ -12,15 +12,20 @@
 */
 
 use crate::{
-    error::AbiError, contract::Contract, token::{Detokenizer, Tokenizer, TokenValue}
+    error::AbiError,
+    contract::Contract,
+    token::{Detokenizer, Tokenizer, TokenValue}
 };
+
+use std::collections::{HashMap};
+use std::str::FromStr;
 
 use ed25519_dalek::{Keypair};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::str::FromStr;
+
 use ton_types::{Result, BuilderData, SliceData};
 use ton_block::MsgAddressInt;
+
 
 /// Encodes `parameters` for given `function` of contract described by `abi` into `BuilderData`
 /// which can be used as message body for calling contract
@@ -44,7 +49,7 @@ pub fn encode_function_call(
         HashMap::new()
     };
     // add public key into header
-    if pair.is_some() && header_tokens.get("pubkey").is_none() {
+    if pair.is_some() && !header_tokens.contains_key("pubkey") {
         header_tokens.insert("pubkey".to_owned(), TokenValue::PublicKey(pair.map(|(pair, _)| pair.public)));
     }
 
@@ -173,10 +178,10 @@ pub fn update_contract_data(abi: &str, parameters: &str, data: SliceData) -> Res
 
 
 /// Decode initial values of public contract variables
-pub fn decode_contract_data(abi: &str, data: SliceData, allow_partial: bool) -> Result<String> {
+pub fn decode_contract_data(abi: &str, data: SliceData) -> Result<String> {
     let contract = Contract::load(abi.as_bytes())?;
 
-    Detokenizer::detokenize(&contract.decode_data(data, allow_partial)?)
+    Detokenizer::detokenize(&contract.decode_init_data(data)?)
 }
 
 /// Decode account storage fields
@@ -195,7 +200,7 @@ pub fn encode_storage_fields(abi: &str, init_fields: Option<&str>) -> Result<Bui
 
     let init_fields = if let Some(init_fields) = init_fields {
         let v: Value =
-            serde_json::from_str(&init_fields).map_err(|err| AbiError::SerdeError { err })?;
+            serde_json::from_str(init_fields).map_err(|err| AbiError::SerdeError { err })?;
         Tokenizer::tokenize_optional_params(&contract.fields, &v)?
     } else {
         HashMap::new()
@@ -203,6 +208,7 @@ pub fn encode_storage_fields(abi: &str, init_fields: Option<&str>) -> Result<Bui
 
     contract.encode_storage_fields(init_fields)
 }
+
 
 #[cfg(test)]
 #[path = "tests/v1/full_stack_tests.rs"]

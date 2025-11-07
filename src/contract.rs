@@ -21,6 +21,7 @@ use std::io;
 use ton_block::Serializable;
 use ton_types::{error, fail, BuilderData, HashmapE, Result, SliceData};
 use crate::param::SerdeParam;
+use crate::token::Cursor;
 
 pub const MIN_SUPPORTED_VERSION: AbiVersion = ABI_VERSION_1_0;
 pub const MAX_SUPPORTED_VERSION: AbiVersion = ABI_VERSION_2_7;
@@ -241,7 +242,7 @@ impl Contract {
         }
 
         if version.major == 1 {
-            if serde_contract.header.len() != 0 {
+            if !serde_contract.header.is_empty() {
                 return Err(AbiError::InvalidData {
                     msg: "Header parameters are not supported in ABI v1".into(),
                 }
@@ -262,7 +263,7 @@ impl Contract {
         }
 
         let mut result = Self {
-            abi_version: version.clone(),
+            abi_version: version,
             header: serde_contract.header,
             functions: HashMap::new(),
             events: HashMap::new(),
@@ -277,7 +278,7 @@ impl Contract {
             Self::check_params_support(&version, function.outputs.iter())?;
             result.functions.insert(
                 function.name.clone(),
-                Function::from_serde(version.clone(), function, result.header.clone()),
+                Function::from_serde(version, function, result.header.clone()),
             );
         }
 
@@ -286,7 +287,7 @@ impl Contract {
             Self::check_params_support(&version, getter.outputs.iter())?;
             result.getters.insert(
                 getter.name.clone(),
-                Function::from_serde(version.clone(), getter, result.header.clone()),
+                Function::from_serde(version, getter, result.header.clone()),
             );
         }
 
@@ -294,7 +295,7 @@ impl Contract {
             Self::check_params_support(&version, event.inputs.iter())?;
             result.events.insert(
                 event.name.clone(),
-                Event::from_serde(version.clone(), event),
+                Event::from_serde(version, event),
             );
         }
 
@@ -334,7 +335,7 @@ impl Contract {
         self.abi_version >= ABI_VERSION_2_4
     }
 
-    fn check_init_fields_support(&self) -> Result<()> {
+    pub fn check_init_fields_support(&self) -> Result<()> {
         if !self.init_fields_supported() {
             return Err(AbiError::NotSupported {
                 subject: "Initial storage fields".to_owned(),
@@ -444,7 +445,7 @@ impl Contract {
         self.abi_version < ABI_VERSION_2_4
     }
 
-    fn check_data_map_support(&self) -> Result<()> {
+    pub fn check_data_map_support(&self) -> Result<()> {
         if !self.data_map_supported() {
             return Err(AbiError::NotSupported {
                 subject: "Initial data dictionary".to_owned(),
@@ -474,17 +475,63 @@ impl Contract {
         SliceData::load_cell(map.serialize()?)
     }
 
+
+    /// Decode init data or init fields of a contract based on its ABI version
+    pub fn decode_init_data(&self, data: SliceData) -> Result<Vec<Token>> {
+        if self.abi_version < ABI_VERSION_2_4 {
+            self.decode_init_data_internal(data)
+        } else {
+            self.decode_init_fields(data)
+        }
+    }
+
+    fn decode_init_data_internal(&self, data: SliceData) -> Result<Vec<Token>> {
+        self.check_data_map_support()?;
+        let map = HashmapE::with_hashmap(Contract::DATA_MAP_KEYLEN, data.reference_opt(0));
+
+        let mut result = Vec::with_capacity(self.data.len());
+
+        for token_value in self.data.values() {
+            let key = SliceData::load_builder(token_value.key.write_to_new_cell()?)?;
+            let Some(value) = map.get(key)? else {
+                anyhow::bail!(AbiError::InvalidData{msg: "Invalid data".to_string()});
+            };
+
+            let cursor = Cursor::from(value);
+            let (value, _) = TokenValue::read_from(&token_value.value.kind, cursor, true, &self.abi_version, false )?;
+            result.push(Token::new(&token_value.value.name, value));
+        }
+
+        Ok(result)
+    }
+
+    fn decode_init_fields(&self, data: SliceData) -> Result<Vec<Token>> {
+        self.check_init_fields_support()?;
+        let values = self.decode_storage_fields(data, false)?;
+
+        let mut init_values = Vec::with_capacity(self.init_fields.len());
+
+        for i in values {
+            if self.init_fields.contains(&i.name) {
+                init_values.push(i)
+            }
+        }
+
+        Ok(init_values)
+    }
+
+    #[deprecated]
     /// Decode initial values of public contract variables
     pub fn decode_data(&self, data: SliceData, allow_partial: bool) -> Result<Vec<Token>> {
         self.check_data_map_support()?;
         let map = HashmapE::with_hashmap(Self::DATA_MAP_KEYLEN, data.reference_opt(0));
 
         let mut tokens = vec![];
-        for (_, item) in &self.data {
+        for item in self.data.values() {
             let key = SliceData::load_builder(item.key.write_to_new_cell()?)?;
             if let Some(value) = map.get(key)? {
                 tokens.append(&mut TokenValue::decode_params(
-                    &vec![item.value.clone()],
+                    &[item.value.clone()],
                     value,
                     &self.abi_version,
                     allow_partial,

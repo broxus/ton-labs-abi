@@ -501,7 +501,7 @@ impl Tokenizer {
             expected: "hex-encoded string".to_string(),
         })?;
 
-        if string.len() == 0 {
+        if string.is_empty() {
             Ok(TokenValue::PublicKey(None))
         } else {
             let data = hex::decode(string).map_err(|err| AbiError::InvalidParameterValue {
