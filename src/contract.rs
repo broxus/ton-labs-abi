@@ -146,6 +146,8 @@ pub struct SerdeFunction {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_opt_u32_from_string")]
     pub id: Option<u32>,
+    #[serde(default, rename = "externalMsg")]
+    pub external_msg: Option<bool>,
 }
 
 /// Contract event specification.

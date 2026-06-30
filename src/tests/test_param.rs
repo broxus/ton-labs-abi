@@ -59,6 +59,7 @@ fn test_encode_internal_output() {
         outputs: vec![],
         input_id: 0,
         output_id: 0,
+        external_msg: None,
     };
 
     let tokens =

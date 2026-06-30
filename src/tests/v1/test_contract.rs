@@ -87,7 +87,8 @@ fn test_abi_parse() {
                 Param { name: "b".to_owned(), kind: ParamType::Uint(8) },
             ],
             input_id: Function::calc_function_id("input_and_output(time,uint64,uint8[],bytes)(int16,uint8)v1") & 0x7FFFFFFF,
-            output_id: Function::calc_function_id("input_and_output(time,uint64,uint8[],bytes)(int16,uint8)v1") | 0x80000000
+            output_id: Function::calc_function_id("input_and_output(time,uint64,uint8[],bytes)(int16,uint8)v1") | 0x80000000,
+            external_msg: None,
         });
 
     functions.insert(
@@ -101,7 +102,8 @@ fn test_abi_parse() {
             ],
             outputs: vec![],
             input_id: Function::calc_function_id("no_output(time,uint15)()v1") & 0x7FFFFFFF,
-            output_id: Function::calc_function_id("no_output(time,uint15)()v1") | 0x80000000
+            output_id: Function::calc_function_id("no_output(time,uint15)()v1") | 0x80000000,
+            external_msg: None,
         });
 
     functions.insert(
@@ -115,7 +117,8 @@ fn test_abi_parse() {
                 Param { name: "a".to_owned(), kind: ParamType::Uint(8) },
             ],
             input_id: Function::calc_function_id("no_input(time)(uint8)v1") & 0x7FFFFFFF,
-            output_id: Function::calc_function_id("no_input(time)(uint8)v1") | 0x80000000
+            output_id: Function::calc_function_id("no_input(time)(uint8)v1") | 0x80000000,
+            external_msg: None,
         });
 
     functions.insert(
@@ -127,7 +130,8 @@ fn test_abi_parse() {
             inputs: vec![],
             outputs: vec![],
             input_id: Function::calc_function_id("constructor(time)()v1") & 0x7FFFFFFF,
-            output_id: Function::calc_function_id("constructor(time)()v1") | 0x80000000
+            output_id: Function::calc_function_id("constructor(time)()v1") | 0x80000000,
+            external_msg: None,
         });
 
     functions.insert(
@@ -139,7 +143,8 @@ fn test_abi_parse() {
             inputs: vec![],
             outputs: vec![],
             input_id: 0x01234567,
-            output_id: 0x01234567
+            output_id: 0x01234567,
+            external_msg: None,
         });
 
     let mut events = HashMap::new();

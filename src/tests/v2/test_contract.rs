@@ -53,6 +53,7 @@ const TEST_ABI: &str = r#"
         {
             "name": "has_id",
             "id": "0x01234567",
+            "externalMsg": true,
             "inputs": [],
             "outputs": []
         }],
@@ -137,6 +138,7 @@ fn test_abi_parse() {
             output_id: Function::calc_function_id(
                 "input_and_output(uint64,uint8[],bytes)(int16,uint8)v2",
             ) | 0x80000000,
+            external_msg: None,
         },
     );
 
@@ -153,6 +155,7 @@ fn test_abi_parse() {
             outputs: vec![],
             input_id: Function::calc_function_id("no_output(uint15)()v2") & 0x7FFFFFFF,
             output_id: Function::calc_function_id("no_output(uint15)()v2") | 0x80000000,
+            external_msg: None,
         },
     );
 
@@ -169,6 +172,7 @@ fn test_abi_parse() {
             }],
             input_id: Function::calc_function_id("no_input()(uint8)v2") & 0x7FFFFFFF,
             output_id: Function::calc_function_id("no_input()(uint8)v2") | 0x80000000,
+            external_msg: None,
         },
     );
 
@@ -182,6 +186,7 @@ fn test_abi_parse() {
             outputs: vec![],
             input_id: Function::calc_function_id("constructor()()v2") & 0x7FFFFFFF,
             output_id: Function::calc_function_id("constructor()()v2") | 0x80000000,
+            external_msg: None,
         },
     );
 
@@ -195,6 +200,7 @@ fn test_abi_parse() {
             outputs: vec![],
             input_id: 0x01234567,
             output_id: 0x01234567,
+            external_msg: Some(true),
         },
     );
 
@@ -343,4 +349,3 @@ fn decode_27_init_data() {
     let x = contract.decode_init_data(SliceData::load_cell(data).unwrap()).unwrap();
     assert_eq!(x.len(), 3);
 }
-

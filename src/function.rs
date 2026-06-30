@@ -42,6 +42,9 @@ pub struct Function {
     pub input_id: u32,
     /// Function ID for outbound messages
     pub output_id: u32,
+    /// Whether the function can be executed as external message.
+    /// Parses as `None` for ABI versions before v2.7.
+    pub external_msg: Option<bool>
 }
 
 impl Function {
@@ -55,6 +58,7 @@ impl Function {
             outputs: serde_function.outputs,
             input_id: 0,
             output_id: 0,
+            external_msg: serde_function.external_msg,
         };
         if let Some(id) = serde_function.id {
             function.input_id = id;
